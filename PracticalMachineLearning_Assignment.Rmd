@@ -1,0 +1,119 @@
+---
+title: "Predicting the Excersize Form Using Wearble Devices Data"
+author: "Ilana Golbin"
+date: "Monday, January 25, 2016"
+output: html_document
+---
+
+# Practical Machine Learning Assignment
+
+## Introduction and Background
+
+Wearable devices, such as Fitbit and Jawbone, are used by consumers to monitor their fitness, heartrate, and general activity. This results in large sums of data, which can be used not only to to determine not only how much of an activity was performed, but not how well. In a weight lifting dataset, 6 participants were asked to preform a variety of exercises wile wearing accelerometers on the belt, forearm, arm, and dumbell. We will use this information to try to predict which exercises were performed by another group of participants. 
+
+## Download the Data
+
+The data is already split into two files: training and testing. The data for this report can be found here: http://groupware.les.inf.puc-rio.br/har.
+
+```{r}
+downloadData <- function(url, NAstrings) {
+    temp <- tempfile()
+    download.file(url, temp, method = "curl")
+    data <- read.csv(temp, na.strings = NAstrings)
+    unlink(temp)
+    return(data)
+}
+
+training <- downloadData("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", c("", "NA", "#DIV/0!"))
+
+testing <- downloadData("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", c("", "NA", "#DIV/0!"))
+
+#dim(training); dim(testing)
+
+observationsTrain <- dim(training)[1]
+featuresTrain <- dim(training)[2]
+observationsTest <- dim(testing)[1]
+featuresTrain <- dim(testing)[2]
+
+table(training$classe)
+
+```
+
+There are `r observationsTrain` observations in the training set, with `r featuresTrain` features. The testing set has `r observationsTest` observations. The features in both are of classes A, B, C, D or E. 
+
+## Feature Selection
+
+It would not be beneficial to train the model on all features, given there are 120. We therefore need to select which ones would have the largest impact, and we can do that in two ways: removing features with near zero variance, and removing columns that are highly correlated to one another. For both of these methods, we can only exclude numeric columns. We also remove other irrelevant columns (e.g. timestamp, window, etc.).
+
+```{r}
+library(caret)
+training <- training[, colSums(is.na(training)) == 0] 
+testing <- testing[, colSums(is.na(training)) == 0] 
+zeroVar= nearZeroVar(training[sapply(training, is.numeric)], saveMetrics = TRUE)
+trainingVar = training[,zeroVar[, 'nzv']==0]
+newTrainingFactors <- dim(trainingVar)[2]
+
+classe <- trainingVar$classe
+removed <- grepl("X|timestamp|window", names(trainingVar))
+trainingVar <- trainingVar[,-removed]
+```
+
+The new training dataset has `r newTrainingFactors` factors. 
+
+```{r}
+corrMatrix <- cor(na.omit(trainingVar[sapply(trainingVar, is.numeric)]))
+dim(corrMatrix)
+noCor = findCorrelation(corrMatrix, cutoff = .90, verbose = TRUE)
+trainingFinal = trainingVar[,-noCor]
+finalTrainingFactors <- dim(trainingFinal)[2]
+```
+
+The final training dataset has `r finalTrainingFactors` factors. 
+
+## Create Validation Set
+
+While the data is already split into training and testing, it is useful to create a validation data set as well to validate the model prior to applying to the testing data set. 
+
+```{r}
+set.seed(15)
+inTrain <- createDataPartition(trainingFinal$classe, p=0.8, list=FALSE)
+trainingData <- trainingFinal[inTrain, ]
+validationData <- trainingFinal[-inTrain, ]
+dim(trainingData); dim(validationData)
+```
+
+## Training the Model 
+
+One option for building a model is the tree-based RandomForest package. In addition, to improve the efficacy, we will cross validate by splitting the dataset randomly into 10 random samples. 
+
+```{r}
+controls <- trainControl(method="cv", 10)
+rftree <- train(classe ~ ., data=trainingData, method="rf", trControl=controls, ntree=150)
+
+#Predict on the validation set
+pvalidation <- predict(rftree, validationData)
+confusionMatrix(validationData$classe, pvalidation)
+```
+
+
+## Accuracy and Test Statistics
+
+```{r}
+# Calculate accuracy
+accuracy <- postResample(pvalidation, validationData$classe)
+accuracy
+
+# Calculate out of sample error
+ose <- 1 - as.numeric(confusionMatrix(validationData$classe, pvalidation)$overall[1])
+ose
+```
+
+## Applying the Model to Test Data Set
+
+With a high accuracy (`r accuracy`) and low out of sample error (`r ose`), we can apply the prediction to the test data set.
+
+```{r}
+result <- predict(rftree, testing)
+```
+
+The final result of the model is: `r result`. The randomForest model we fit seems to have performed well. 
